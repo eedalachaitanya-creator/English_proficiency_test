@@ -250,6 +250,40 @@ class UserCreateByAdminResponse(BaseModel):
     email_status: str  # "sent" | "failed" | "pending"
     email_error: Optional[str] = None
 
+class UserUpdateByAdminRequest(BaseModel):
+    """PATCH /api/admin/users/{user_id}. All fields optional — admin
+    edits only what they want to change. Sending `password=null` means
+    "leave password alone" (NOT "clear it"). Email is re-validated for
+    uniqueness if changed. Role is intentionally NOT editable here —
+    promoting/demoting between HR and admin has knock-on effects on
+    candidate ownership that v1 doesn't address.
+    """
+    name: Optional[str] = Field(default=None, min_length=1, max_length=100)
+    email: Optional[EmailStr] = None
+    password: Optional[str] = Field(default=None, min_length=6, max_length=128)
+
+    @field_validator("password")
+    @classmethod
+    def reject_whitespace(cls, v: Optional[str]) -> Optional[str]:
+        """Same protection as UserCreateByAdminRequest.password."""
+        if v is None:
+            return v
+        if not v.strip() or v != v.strip():
+            raise ValueError(
+                "Password cannot start with, end with, or be only whitespace."
+            )
+        return v
+
+
+class UserUpdateByAdminResponse(BaseModel):
+    """Response after updating an HR or admin. No email field since
+    update doesn't send a new welcome email — admin shares the new
+    password manually if they reset it."""
+    id: int
+    name: str
+    email: EmailStr
+    role: Literal["hr", "admin"]
+
 
 # ============================================================
 # Invitation creation (HR side)

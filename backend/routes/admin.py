@@ -50,6 +50,8 @@ from schemas import (
     ForgotPasswordRequest,
     UserCreateByAdminRequest,
     UserCreateByAdminResponse,
+    UserUpdateByAdminRequest,
+    UserUpdateByAdminResponse,
     PaginatedScoreSummary,
     ScoreSummary,
 )
@@ -559,6 +561,83 @@ def create_user(
         role=user.role,
         email_status="sent" if email_ok else "failed",
         email_error=email_err,
+    )
+
+@router.patch("/users/{user_id}", response_model=UserUpdateByAdminResponse)
+def update_user(
+    user_id: int,
+    payload: UserUpdateByAdminRequest,
+    _admin: HRAdmin = Depends(require_admin_strict),
+    db: Session = Depends(get_db),
+):
+    """
+    Update an HR account's name, email, or password. Admin-only.
+
+    Partial update — only fields the admin changes get applied. Sending
+    `null` for a field means "don't touch it" (NOT "clear it").
+
+    Constraints:
+    - 404 if user_id doesn't exist or is soft-deleted
+    - 403 if target is an admin (only HR rows are editable in v1, since
+      admins editing other admins has policy questions we haven't answered)
+    - 409 if changing email to one that's already in use by another
+      active user
+    - Password is re-hashed if provided; old hash is replaced
+
+    Does NOT send a welcome email on password reset — admin shares the
+    new password manually. Email change does NOT notify the HR either —
+    they'll see it next time they log in.
+    """
+    user = (
+        db.query(HRAdmin)
+        .filter(HRAdmin.id == user_id, HRAdmin.deleted_at.is_(None))
+        .first()
+    )
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found.")
+
+    if user.role == "admin":
+        raise HTTPException(
+            status_code=403,
+            detail="Admin accounts cannot be edited via this endpoint.",
+        )
+
+    if payload.email is not None:
+        new_email = payload.email.lower()
+        if new_email != user.email:
+            # Email is being changed — check for collisions against other
+            # active users. Soft-deleted accounts don't count.
+            collision = (
+                db.query(HRAdmin)
+                .filter(
+                    HRAdmin.email == new_email,
+                    HRAdmin.deleted_at.is_(None),
+                    HRAdmin.id != user.id,
+                )
+                .first()
+            )
+            if collision:
+                collision_label = "admin" if collision.role == "admin" else "HR"
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"That email is already in use by an {collision_label} account.",
+                )
+            user.email = new_email
+
+    if payload.name is not None:
+        user.name = payload.name.strip()
+
+    if payload.password is not None:
+        user.password_hash = hash_password(payload.password)
+
+    db.commit()
+    db.refresh(user)
+
+    return UserUpdateByAdminResponse(
+        id=user.id,
+        name=user.name,
+        email=user.email,
+        role=user.role,
     )
 
 
