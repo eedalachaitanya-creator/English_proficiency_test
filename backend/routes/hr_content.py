@@ -165,10 +165,20 @@ def _check_writing_topic_in_use(db: Session, topic_id: int) -> None:
 @router.get("/passages", response_model=List[schemas.PassageOut])
 def list_passages(
     difficulty: Optional[str] = Query(None),
+    include_disabled: bool = Query(
+        True,
+        description=(
+            "Whether to include passages where disabled_at IS NOT NULL. "
+            "Default True keeps the management page showing all passages. "
+            "Set False from pickers/dropdowns that should only offer active ones."
+        ),
+    ),
     db: Session = Depends(get_db),
     hr: HRAdmin = Depends(require_hr_strict),
 ):
     q = db.query(Passage).filter(Passage.deleted_at.is_(None)).order_by(Passage.id.desc())
+    if not include_disabled:
+        q = q.filter(Passage.disabled_at.is_(None))
     if difficulty:
         _validate_difficulty(difficulty)
         q = q.filter(Passage.difficulty == difficulty)
